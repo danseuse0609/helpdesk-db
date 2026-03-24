@@ -231,12 +231,13 @@ INSERT INTO ticket_tags (ticket_id, tag_id) VALUES (7, 4);  -- access
 -- ---------------------------------------------------------------
 -- Technician Daily Snapshot (sample for Alice on recent days)
 -- ---------------------------------------------------------------
-INSERT INTO technician_daily_snapshot (user_id, snapshot_date, tickets_assigned, tickets_resolved, avg_resolution_hrs, csat_avg, reopened_count)
-  VALUES (1, TRUNC(SYSDATE) - 7, 3, 2, 18.5, 4.5, 0);
-INSERT INTO technician_daily_snapshot (user_id, snapshot_date, tickets_assigned, tickets_resolved, avg_resolution_hrs, csat_avg, reopened_count)
-  VALUES (1, TRUNC(SYSDATE) - 6, 2, 2, 12.0, 5.0, 1);
-INSERT INTO technician_daily_snapshot (user_id, snapshot_date, tickets_assigned, tickets_resolved, avg_resolution_hrs, csat_avg, reopened_count)
-  VALUES (2, TRUNC(SYSDATE) - 7, 4, 3, 22.1, 3.7, 0);
+-- Tracked by (snapshot_date, company_id)
+INSERT INTO ticket_daily_snapshot (snapshot_date, company_id, open_tickets, solved_today, avg_handle_time_hrs)
+  VALUES (TRUNC(SYSDATE) - 1, 2, 5, 2, 4.5);
+INSERT INTO ticket_daily_snapshot (snapshot_date, company_id, open_tickets, solved_today, avg_handle_time_hrs)
+  VALUES (TRUNC(SYSDATE) - 1, 3, 3, 1, 12.2);
+INSERT INTO ticket_daily_snapshot (snapshot_date, company_id, open_tickets, solved_today, avg_handle_time_hrs)
+  VALUES (TRUNC(SYSDATE), 2, 4, 1, 3.8);
 
 -- ---------------------------------------------------------------
 -- Ticket Features (engineered for ML)
