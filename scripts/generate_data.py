@@ -1,333 +1,186 @@
-"""
-generate_data.py
-================
-CS-630 Final Project — Help Desk Ticket System
-Data Science Track: Scalable Data Population Script
-
-PURPOSE
--------
-Generates realistic, statistically patterned INSERT statements for the
-help desk schema.  Outputs a single SQL file (generated_data.sql) that
-can be run directly against Oracle.
-
-DESIGN PHILOSOPHY
------------------
-- Volume-configurable: change NUM_COMPANIES / NUM_USERS / NUM_TICKETS at top
-- Realistic distributions:
-    * Ticket priority  → skewed toward medium/high (Poisson-inspired weights)
-    * Ticket volume    → business-hours spike (8am–6pm), weekday bias
-    * Resolution time  → log-normal per priority band
-    * CSAT scores      → right-skewed (most customers satisfied)
-    * Technician load  → roughly Pareto (a few techs handle most tickets)
-
-USAGE
------
-    python generate_data.py
-    # produces: generated_data.sql in current directory
-
-REQUIREMENTS
-------------
-    Python 3.8+, no third-party packages required (uses only stdlib)
-"""
-
 import random
 import math
 from datetime import datetime, timedelta
-from typing import List, Tuple
 
-# ── Configuration ────────────────────────────────────────────────────────────
-NUM_COMPANIES    = 20
-NUM_USERS        = 100   # ~20% are technicians, rest are customers
-NUM_TICKETS      = 500
+# ---- Configuration ---------------------------------------------------------
+NUM_COMPANIES    = 5
+NUM_USERS        = 20   # ~20% are technicians, rest are customers
+NUM_TICKETS      = 30
 SEED             = 42
-OUTPUT_FILE      = "generated_data.sql"
 START_DATE       = datetime(2024, 1, 1)
 END_DATE         = datetime(2025, 3, 1)
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 random.seed(SEED)
 
 INDUSTRIES   = ["Technology", "Finance", "Retail", "Healthcare", "Logistics",
-                 "Manufacturing", "Education", "Media", "Energy", "Government"]
-TIERS        = ["standard", "standard", "standard", "premium", "enterprise"]  # weighted
+                "Manufacturing", "Education", "Media", "Energy", "Government"]
+TIERS        = ["standard", "standard", "standard", "premium", "enterprise"]
 DEPARTMENTS  = ["IT", "Engineering", "Finance", "Operations", "HR", "Sales", "Legal"]
-PRIORITIES   = ["low", "medium", "medium", "high", "high", "critical"]  # weighted
+PRIORITIES   = ["low", "medium", "medium", "high", "high", "critical"]
 CATEGORIES   = ["Network", "Email", "Hardware", "Access", "Software",
-                 "Authentication", "VPN", "Printing", "Other"]
+                "Authentication", "VPN", "Printing", "Other"]
 STATUSES     = ["open", "in_progress", "resolved", "closed"]
-EVENT_TYPES  = ["login", "view_ticket", "submit_ticket", "comment", "logout"]
 
-PRIORITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+# ---- Helpers --------------------------------------------------------------
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+def rand_name():
+    first = ["Alice", "Bob", "Carol", "Dan", "Eva", "Frank", "Grace", "Hank", "Iris", "Jake",
+             "Karen", "Leo", "Mia", "Noah", "Olivia", "Paul", "Quinn", "Rosa", "Sam", "Tina",
+             "Uma", "Victor", "Wendy", "Xander", "Yara", "Zoe"]
+    last = ["Smith", "Jones", "Patel", "Kim", "Chen", "Reyes", "Ng", "Torres", "Wu", "Obi",
+            "Lee", "Brown", "Davis", "Wilson", "Taylor", "Anderson", "Jackson", "White",
+            "Harris", "Martin"]
+    return random.choice(first) + " " + random.choice(last)
 
-def rand_name() -> str:
-    first = ["Alice","Bob","Carol","Dan","Eva","Frank","Grace","Hank","Iris","Jake",
-             "Karen","Leo","Mia","Noah","Olivia","Paul","Quinn","Rosa","Sam","Tina",
-             "Uma","Victor","Wendy","Xander","Yara","Zoe"]
-    last  = ["Smith","Jones","Patel","Kim","Chen","Reyes","Ng","Torres","Wu","Obi",
-             "Lee","Brown","Davis","Wilson","Taylor","Anderson","Jackson","White","Harris","Martin"]
-    return f"{random.choice(first)} {random.choice(last)}"
-
-def rand_email(name: str, domain: str) -> str:
+def rand_email(name, domain):
     parts = name.lower().split()
-    return f"{parts[0]}.{parts[1]}@{domain}"
+    return parts[0] + "." + parts[1] + "@" + domain
 
-def rand_domain(company_name: str) -> str:
+def rand_domain(company_name):
     slug = company_name.lower().replace(" ", "")[:10]
-    return f"{slug}.com"
+    return slug + ".com"
 
-def rand_ts(start: datetime, end: datetime) -> datetime:
-    """Random timestamp biased toward business hours on weekdays."""
+def rand_ts(start, end):
     attempts = 0
     while True:
         delta = end - start
         t = start + timedelta(seconds=random.randint(0, int(delta.total_seconds())))
-        # Accept business hours (8-18) with higher probability
         is_biz = 8 <= t.hour <= 18 and t.weekday() < 5
         if is_biz or random.random() < 0.2 or attempts > 50:
             return t
         attempts += 1
 
-def ts_str(dt: datetime) -> str:
-    return f"TO_TIMESTAMP('{dt.strftime('%Y-%m-%d %H:%M:%S')}', 'YYYY-MM-DD HH24:MI:SS')"
+def ts_str(dt):
+    return "TO_TIMESTAMP('{0}', 'YYYY-MM-DD HH24:MI:SS')".format(dt.strftime('%Y-%m-%d %H:%M:%S'))
 
-def date_str(dt: datetime) -> str:
-    return f"TO_DATE('{dt.strftime('%Y-%m-%d')}', 'YYYY-MM-DD')"
+def date_str(dt):
+    return "TO_DATE('{0}', 'YYYY-MM-DD')".format(dt.strftime('%Y-%m-%d'))
 
-def resolution_hours(priority: str) -> float:
-    """Log-normal resolution time by priority band (realistic IT patterns)."""
+def resolution_hours(priority):
     params = {
-        "critical": (1.5, 0.6),   # median ~4.5 hrs
-        "high":     (3.0, 0.7),   # median ~20 hrs
-        "medium":   (4.0, 0.8),   # median ~55 hrs
-        "low":      (4.5, 0.9),   # median ~90 hrs
+        "critical": (1.5, 0.6),
+        "high": (3.0, 0.7),
+        "medium": (4.0, 0.8),
+        "low": (4.5, 0.9),
     }
     mu, sigma = params[priority]
     return max(0.25, math.exp(random.gauss(mu, sigma)))
 
-def csat_score() -> int:
-    """Right-skewed: 5=40%, 4=30%, 3=20%, 2=7%, 1=3%"""
+def csat_score():
     return random.choices([5, 4, 3, 2, 1], weights=[40, 30, 20, 7, 3])[0]
 
-def escape_sql(s: str) -> str:
+def escape_sql(s):
     return s.replace("'", "''")
 
-# ── Generation ───────────────────────────────────────────────────────────────
+# ---- Generation -----------------------------------------------------------
 
-def generate(output_path: str) -> None:
-    lines: List[str] = []
+def generate():
+    lines = []
 
-    def emit(sql: str) -> None:
+    def emit(sql):
         lines.append(sql)
 
     emit("-- =============================================================")
-    emit("-- generated_data.sql  (auto-generated by generate_data.py)")
-    emit(f"-- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    emit(f"-- Config: {NUM_COMPANIES} companies, {NUM_USERS} users, {NUM_TICKETS} tickets")
+    emit("-- generated_data.sql  (auto-generated by Python script)")
+    emit("-- Generated: {0}".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    emit("-- Config: {0} companies, {1} users, {2} tickets".format(
+        NUM_COMPANIES, NUM_USERS, NUM_TICKETS))
     emit("-- =============================================================")
     emit("")
 
-    # ── Companies ──────────────────────────────────────────────────────────
+    # Companies
     emit("-- Companies")
-    company_ids   : List[int] = []
-    company_names : List[str] = []
-    company_tiers : List[str] = []
-
+    company_ids = []
+    company_names = []
     used_names = set()
     for i in range(1, NUM_COMPANIES + 1):
         while True:
-            name = f"{random.choice(['Alpha','Beta','Gamma','Delta','Omega','Apex','Nova','Titan','Zenith','Crest'])} {random.choice(['Corp','Inc','LLC','Solutions','Group','Partners','Systems','Labs','Ventures','Co'])}"
+            name = random.choice(['Alpha', 'Beta', 'Gamma', 'Delta', 'Omega', 'Apex', 'Nova', 'Titan', 'Zenith', 'Crest']) + " " + \
+                   random.choice(['Corp', 'Inc', 'LLC', 'Solutions', 'Group', 'Partners', 'Systems', 'Labs', 'Ventures', 'Co'])
             if name not in used_names:
                 used_names.add(name)
                 break
         industry = random.choice(INDUSTRIES)
-        tier     = random.choice(TIERS)
+        tier = random.choice(TIERS)
         company_ids.append(i)
         company_names.append(name)
-        company_tiers.append(tier)
-        emit(f"INSERT INTO companies (company_name, industry, tier) VALUES ('{escape_sql(name)}', '{industry}', '{tier}');")
+        emit("INSERT INTO companies (company_name, industry, tier) VALUES ('{0}', '{1}', '{2}');".format(escape_sql(name), industry, tier))
     emit("")
 
-    # ── Users ──────────────────────────────────────────────────────────────
+    # Users
     emit("-- Users")
-    user_ids       : List[int] = []
-    user_roles     : List[str] = []
-    user_companies : List[int] = []
-    technician_ids : List[int] = []
-
+    user_ids, user_roles, user_companies, technician_ids = [], [], [], []
     used_emails = set()
-    uid = 1
-    for i in range(NUM_USERS):
+    for uid in range(1, NUM_USERS + 1):
         company_id = random.choice(company_ids)
-        domain     = rand_domain(company_names[company_id - 1])
-        name       = rand_name()
-        # First 15% of users are technicians
-        role       = "technician" if i < max(5, int(NUM_USERS * 0.15)) else \
-                     "admin"      if i == 0 else \
-                     "customer"
-        dept       = random.choice(DEPARTMENTS)
+        domain = rand_domain(company_names[company_id - 1])
+        name = rand_name()
+        
+        if uid <= max(2, int(NUM_USERS * 0.15)):
+            role = "technician"
+            technician_ids.append(uid)
+        else:
+            role = "customer"
 
         email = rand_email(name, domain)
-        counter = 0
-        while email in used_emails:
-            counter += 1
-            email = f"{email.split('@')[0]}{counter}@{domain}"
+        if email in used_emails:
+            email = email.replace("@", f"{uid}@")
         used_emails.add(email)
 
         user_ids.append(uid)
         user_roles.append(role)
         user_companies.append(company_id)
-        if role == "technician":
-            technician_ids.append(uid)
-        emit(f"INSERT INTO users (company_id, full_name, email, role, department) "
-             f"VALUES ({company_id}, '{escape_sql(name)}', '{email}', '{role}', '{dept}');")
-        uid += 1
+        emit("INSERT INTO users (company_id, full_name, email, role, department) VALUES ({0}, '{1}', '{2}', '{3}', '{4}');"
+             .format(company_id, escape_sql(name), email, role, random.choice(DEPARTMENTS)))
     emit("")
 
-    if not technician_ids:
-        technician_ids = [1]
-
-    # ── Tickets ────────────────────────────────────────────────────────────
+    # Tickets
     emit("-- Tickets")
-    ticket_ids        : List[int] = []
-    ticket_priorities : List[str] = []
-    ticket_statuses   : List[str] = []
-    ticket_companies  : List[int] = []
-    ticket_created    : List[datetime] = []
-    ticket_resolved   : List[datetime] = []
-
-    # Pareto-like: some technicians handle far more tickets
-    tech_weights = [1 / (i + 1) for i in range(len(technician_ids))]
-    tw_sum = sum(tech_weights)
-    tech_weights = [w / tw_sum for w in tech_weights]
-
-    customer_ids = [u for u, r in zip(user_ids, user_roles) if r == "customer"]
-    if not customer_ids:
-        customer_ids = user_ids
+    ticket_data = []
+    customer_ids = [u for u, r in zip(user_ids, user_roles) if r == "customer"] or user_ids
 
     for tid in range(1, NUM_TICKETS + 1):
-        company_id   = random.choice(company_ids)
-        submitter    = random.choice(customer_ids)
-        priority     = random.choice(PRIORITIES)
-        category     = random.choice(CATEGORIES)
-        created_at   = rand_ts(START_DATE, END_DATE)
-        resolved_at  = None
-
-        # Assign status probabilistically
+        company_id = random.choice(company_ids)
+        submitter = random.choice(customer_ids)
+        priority = random.choice(PRIORITIES)
+        category = random.choice(CATEGORIES)
+        created_at = rand_ts(START_DATE, END_DATE)
+        
         r = random.random()
-        if r < 0.15:
-            status = "open"
-            assigned_to = "NULL"
-        elif r < 0.25:
-            status = "in_progress"
-            assigned_to = str(random.choices(technician_ids, weights=tech_weights)[0])
-        elif r < 0.70:
-            status = "resolved"
-            assigned_to = str(random.choices(technician_ids, weights=tech_weights)[0])
-            resolved_at = created_at + timedelta(hours=resolution_hours(priority))
-        else:
-            status = "closed"
-            assigned_to = str(random.choices(technician_ids, weights=tech_weights)[0])
-            resolved_at = created_at + timedelta(hours=resolution_hours(priority))
+        status = "open"
+        assigned_to = "NULL"
+        resolved_at = None
 
-        subject = f"{random.choice(['Issue with','Problem in','Cannot access','Error in','Request for'])} {category.lower()} {random.choice(['system','service','connection','account','device'])}"
-        desc    = f"User reports {category.lower()} issue. Priority marked as {priority}. Requires {random.choice(['immediate','standard','routine'])} attention."
+        if r > 0.15:
+            status = random.choice(["in_progress", "resolved", "closed"])
+            assigned_to = str(random.choice(technician_ids))
+            if status in ["resolved", "closed"]:
+                resolved_at = created_at + timedelta(hours=resolution_hours(priority))
 
-        ticket_ids.append(tid)
-        ticket_priorities.append(priority)
-        ticket_statuses.append(status)
-        ticket_companies.append(company_id)
-        ticket_created.append(created_at)
-        ticket_resolved.append(resolved_at)
-
-        resolved_sql = f", {ts_str(resolved_at)}" if resolved_at else ", NULL"
-        emit(f"INSERT INTO tickets "
-             f"(company_id, submitted_by, assigned_to, subject, description, priority, status, category, created_at, resolved_at) "
-             f"VALUES ({company_id}, {submitter}, {assigned_to}, "
-             f"'{escape_sql(subject)}', '{escape_sql(desc)}', '{priority}', '{status}', '{category}', "
-             f"{ts_str(created_at)}{resolved_sql});")
+        subject = f"{random.choice(['Issue with', 'Request for'])} {category.lower()} {random.choice(['system', 'access'])}"
+        desc = f"User reports {category.lower()} issue."
+        
+        ticket_data.append({"id": tid, "status": status, "priority": priority, "company_id": company_id, "created_at": created_at})
+        
+        res_sql = f", {ts_str(resolved_at)}" if resolved_at else ", NULL"
+        emit(f"INSERT INTO tickets (company_id, submitted_by, assigned_to, subject, description, priority, status, category, created_at, resolved_at) "
+             f"VALUES ({company_id}, {submitter}, {assigned_to}, '{escape_sql(subject)}', '{escape_sql(desc)}', '{priority}', '{status}', '{category}', {ts_str(created_at)}{res_sql});")
     emit("")
 
-    # ── CSAT Scores (resolved/closed tickets only) ──────────────────────────
+    # CSAT & Snapshots
     emit("-- CSAT Scores")
-    for i, (tid, status) in enumerate(zip(ticket_ids, ticket_statuses)):
-        if status in ("resolved", "closed") and random.random() < 0.6:
-            rater = random.choice(customer_ids)
-            score = csat_score()
-            comment = random.choice([
-                "Great service!", "Could be faster.", "Issue resolved, thanks.",
-                "Took longer than expected.", "Excellent support!", "Average experience.",
-                "Very helpful technician.", "Had to follow up multiple times."
-            ])
-            emit(f"INSERT INTO csat_scores (ticket_id, rated_by, score, comments) "
-                 f"VALUES ({tid}, {rater}, {score}, '{escape_sql(comment)}');")
-    emit("")
+    for t in ticket_data:
+        if t["status"] in ("resolved", "closed") and random.random() < 0.6:
+            emit(f"INSERT INTO csat_scores (ticket_id, rated_by, score, comments) VALUES ({t['id']}, {random.choice(customer_ids)}, {csat_score()}, 'Generated feedback');")
+    
+    emit("\n-- Ticket Daily Snapshots")
+    for t in ticket_data:
+        emit(f"INSERT INTO ticket_daily_snapshot (snapshot_date, ticket_id, company_id, status, priority, age_hours, is_over_sla, num_comments_to_date) "
+             f"VALUES ({date_str(t['created_at'])}, {t['id']}, {t['company_id']}, '{t['status']}', '{t['priority']}', {round(random.uniform(0, 24), 2)}, 'N', {random.randint(0, 3)});")
 
-    # ── Ticket Features (for all tickets) ──────────────────────────────────
-    emit("-- Ticket Features (engineered)")
-    for i, (tid, priority, created_at, resolved_at) in enumerate(
-            zip(ticket_ids, ticket_priorities, ticket_created, ticket_resolved)):
-        swc  = random.randint(4, 10)
-        dwc  = random.randint(8, 40)
-        hod  = created_at.hour
-        dow  = created_at.isoweekday()
-        iswe = 1 if dow >= 6 else 0
-        reo  = 1 if random.random() < 0.05 else 0
-        ttfr = round(random.uniform(0.1, 8.0), 2)
-        ttr  = round((resolved_at - created_at).total_seconds() / 3600, 2) if resolved_at else "NULL"
-        penc = PRIORITY_RANK[priority]
-        emit(f"INSERT INTO ticket_features "
-             f"(ticket_id, subject_word_count, desc_word_count, hour_of_day, day_of_week, "
-             f"is_weekend, reopen_count, time_to_first_resp_hrs, time_to_resolve_hrs, priority_encoded) "
-             f"VALUES ({tid}, {swc}, {dwc}, {hod}, {dow}, {iswe}, {reo}, {ttfr}, {ttr}, {penc});")
-    emit("")
-
-    # ── User Events (sample) ────────────────────────────────────────────────
-    emit("-- User Events (sample activity tracking)")
-    for _ in range(min(NUM_TICKETS * 3, 1500)):
-        uid_   = random.choice(user_ids)
-        tid_   = random.choice(ticket_ids) if random.random() < 0.7 else "NULL"
-        etype  = random.choice(EVENT_TYPES)
-        sess   = f"sess_{random.randint(100000, 999999)}"
-        et     = rand_ts(START_DATE, END_DATE)
-        emit(f"INSERT INTO user_events (user_id, ticket_id, event_type, session_id, event_at) "
-             f"VALUES ({uid_}, {tid_}, '{etype}', '{sess}', {ts_str(et)});")
-    emit("")
-
-    # ── Technician Daily Snapshots ──────────────────────────────────────────
-    emit("-- Technician Daily Snapshots")
-    seen_snaps = set()
-    for _ in range(min(len(technician_ids) * 60, 300)):
-        tech = random.choice(technician_ids)
-        snap_date = START_DATE + timedelta(days=random.randint(0, (END_DATE - START_DATE).days))
-        snap_date = snap_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        key = (tech, snap_date.date())
-        if key in seen_snaps:
-            continue
-        seen_snaps.add(key)
-        assigned  = random.randint(0, 8)
-        resolved  = random.randint(0, assigned)
-        avg_hrs   = round(random.lognormvariate(3.2, 0.8), 2)
-        csat_avg  = round(random.uniform(2.5, 5.0), 2)
-        reopened  = random.randint(0, max(1, resolved // 5))
-        emit(f"INSERT INTO technician_daily_snapshot "
-             f"(user_id, snapshot_date, tickets_assigned, tickets_resolved, avg_resolution_hrs, csat_avg, reopened_count) "
-             f"VALUES ({tech}, {date_str(snap_date)}, {assigned}, {resolved}, {avg_hrs}, {csat_avg}, {reopened});")
-    emit("")
-
-    emit("COMMIT;")
-    emit("")
-    emit(f"-- Total statements generated: ~{len(lines)}")
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-
-    print(f"✅ Generated {len(lines)} SQL lines → {output_path}")
-    print(f"   Companies: {NUM_COMPANIES}")
-    print(f"   Users:     {NUM_USERS}  (technicians: ~{max(5, int(NUM_USERS*0.15))})")
-    print(f"   Tickets:   {NUM_TICKETS}")
-
+    emit("\nCOMMIT;")
+    print("\n".join(lines))
 
 if __name__ == "__main__":
-    generate(OUTPUT_FILE)
+    generate()
