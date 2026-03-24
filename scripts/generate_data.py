@@ -1,10 +1,11 @@
 import random
 import math
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 # ---- Configuration ---------------------------------------------------------
 NUM_COMPANIES    = 5
-NUM_USERS        = 20   # ~20% are technicians, rest are customers
+NUM_USERS        = 20
 NUM_TICKETS      = 30
 SEED             = 42
 START_DATE       = datetime(2024, 1, 1)
@@ -13,62 +14,24 @@ END_DATE         = datetime(2025, 3, 1)
 
 random.seed(SEED)
 
-INDUSTRIES   = ["Technology", "Finance", "Retail", "Healthcare", "Logistics",
-                "Manufacturing", "Education", "Media", "Energy", "Government"]
-TIERS        = ["standard", "standard", "standard", "premium", "enterprise"]
+INDUSTRIES   = ["Technology", "Finance", "Retail", "Healthcare", "Logistics", "Manufacturing"]
+TIERS        = ["standard", "premium", "enterprise"]
 DEPARTMENTS  = ["IT", "Engineering", "Finance", "Operations", "HR", "Sales", "Legal"]
-PRIORITIES   = ["low", "medium", "medium", "high", "high", "critical"]
-CATEGORIES   = ["Network", "Email", "Hardware", "Access", "Software",
-                "Authentication", "VPN", "Printing", "Other"]
-STATUSES     = ["open", "in_progress", "resolved", "closed"]
+PRIORITIES   = ["low", "medium", "high", "critical"]
+CATEGORIES   = ["Network", "Email", "Hardware", "Access", "Software", "VPN"]
 
 # ---- Helpers --------------------------------------------------------------
 
 def rand_name():
-    first = ["Alice", "Bob", "Carol", "Dan", "Eva", "Frank", "Grace", "Hank", "Iris", "Jake",
-             "Karen", "Leo", "Mia", "Noah", "Olivia", "Paul", "Quinn", "Rosa", "Sam", "Tina",
-             "Uma", "Victor", "Wendy", "Xander", "Yara", "Zoe"]
-    last = ["Smith", "Jones", "Patel", "Kim", "Chen", "Reyes", "Ng", "Torres", "Wu", "Obi",
-            "Lee", "Brown", "Davis", "Wilson", "Taylor", "Anderson", "Jackson", "White",
-            "Harris", "Martin"]
+    first = ["Alice", "Bob", "Carol", "Dan", "Eva", "Frank", "Grace", "Hank", "Iris", "Jake"]
+    last = ["Smith", "Jones", "Patel", "Kim", "Chen", "Reyes", "Ng", "Torres"]
     return random.choice(first) + " " + random.choice(last)
-
-def rand_email(name, domain):
-    parts = name.lower().split()
-    return parts[0] + "." + parts[1] + "@" + domain
-
-def rand_domain(company_name):
-    slug = company_name.lower().replace(" ", "")[:10]
-    return slug + ".com"
-
-def rand_ts(start, end):
-    attempts = 0
-    while True:
-        delta = end - start
-        t = start + timedelta(seconds=random.randint(0, int(delta.total_seconds())))
-        is_biz = 8 <= t.hour <= 18 and t.weekday() < 5
-        if is_biz or random.random() < 0.2 or attempts > 50:
-            return t
-        attempts += 1
 
 def ts_str(dt):
     return "TO_TIMESTAMP('{0}', 'YYYY-MM-DD HH24:MI:SS')".format(dt.strftime('%Y-%m-%d %H:%M:%S'))
 
 def date_str(dt):
     return "TO_DATE('{0}', 'YYYY-MM-DD')".format(dt.strftime('%Y-%m-%d'))
-
-def resolution_hours(priority):
-    params = {
-        "critical": (1.5, 0.6),
-        "high": (3.0, 0.7),
-        "medium": (4.0, 0.8),
-        "low": (4.5, 0.9),
-    }
-    mu, sigma = params[priority]
-    return max(0.25, math.exp(random.gauss(mu, sigma)))
-
-def csat_score():
-    return random.choices([5, 4, 3, 2, 1], weights=[40, 30, 20, 7, 3])[0]
 
 def escape_sql(s):
     return s.replace("'", "''")
@@ -77,7 +40,64 @@ def escape_sql(s):
 
 def generate():
     lines = []
+    def emit(sql): lines.append(sql)
 
+    emit("-- =============================================================")
+    emit("-- generated_data.sql (Updated for Aggregate Snapshots)")
+    emit("-- =============================================================")
+
+    # 1. Companies
+    company_ids = list(range(1, NUM_COMPANIES + 1))
+    for i in company_ids:
+        name = f"Company {i} " + random.choice(['Corp', 'Inc', 'LLC', 'Solutions'])
+        emit("INSERT INTO companies (company_name, industry, tier) VALUES ('{0}', '{1}', '{2}');"
+             .format(escape_sql(name), random.choice(INDUSTRIES), random.choice(TIERS)))
+
+    # 2. Users
+    tech_ids = [1, 2, 3]
+    for uid in range(1, NUM_USERS + 1):
+        role = "technician" if uid in tech_ids else "customer"
+        emit("INSERT INTO users (company_id, full_name, email, role, department) VALUES ({0}, '{1}', 'user{2}@test.com', '{3}', '{4}');"
+             .format(random.choice(company_ids), rand_name(), uid, role, random.choice(DEPARTMENTS)))
+
+    # 3. Tickets Logic
+    # We need to track data to aggregate for the snapshot table
+    daily_stats = defaultdict(lambda: {"open": 0, "solved": 0, "durations": []})
+
+    for tid in range(1, NUM_TICKETS + 1):
+        cid = random.choice(company_ids)
+        created_at = START_DATE + timedelta(days=random.randint(0, 300))
+        day_key = (created_at.date(), cid)
+        
+        status = random.choice(["open", "in_progress", "resolved", "closed"])
+        priority = random.choice(PRIORITIES)
+        
+        # Track stats for snapshots
+        daily_stats[day_key]["open"] += 1
+        if status in ["resolved", "closed"]:
+            daily_stats[day_key]["solved"] += 1
+            # Simulate a resolution time between 1 and 48 hours
+            handle_time = round(random.uniform(1, 48), 2)
+            daily_stats[day_key]["durations"].append(handle_time)
+
+        emit("INSERT INTO tickets (company_id, submitted_by, assigned_to, subject, description, priority, status, category, created_at) "
+             "VALUES ({0}, {1}, {2}, 'Issue {3}', 'Description', '{4}', '{5}', '{6}', {7});"
+             .format(cid, random.randint(4, NUM_USERS), random.choice(tech_ids), tid, priority, status, random.choice(CATEGORIES), ts_str(created_at)))
+
+    emit("\n-- Ticket Daily Snapshots (Aggregated by Date and Company)")
+    # 4. Snapshots (Matching your specific Table Structure)
+    for (s_date, cid), stats in daily_stats.items():
+        avg_time = round(sum(stats["durations"]) / len(stats["durations"]), 2) if stats["durations"] else 0
+        
+        emit("INSERT INTO ticket_daily_snapshot (snapshot_date, company_id, open_tickets, solved_today, avg_handle_time_hrs) "
+             "VALUES (TO_DATE('{0}', 'YYYY-MM-DD'), {1}, {2}, {3}, {4});"
+             .format(s_date, cid, stats["open"], stats["solved"], avg_time))
+
+    emit("\nCOMMIT;")
+    print("\n".join(lines))
+
+if __name__ == "__main__":
+    generate()
     def emit(sql):
         lines.append(sql)
 
