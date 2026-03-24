@@ -17,7 +17,7 @@ DROP TABLE ticket_features         CASCADE CONSTRAINTS PURGE;
 DROP TABLE company_weekly_stats    CASCADE CONSTRAINTS PURGE;
 DROP TABLE csat_scores             CASCADE CONSTRAINTS PURGE;
 DROP TABLE ticket_kb_references    CASCADE CONSTRAINTS PURGE;
-DROP TABLE technician_daily_snapshot CASCADE CONSTRAINTS PURGE;
+DROP TABLE ticket_daily_snapshot CASCADE CONSTRAINTS PURGE;
 DROP TABLE user_events             CASCADE CONSTRAINTS PURGE;
 
 -- Core tables
