@@ -85,18 +85,14 @@ CREATE TABLE user_events (
     CONSTRAINT fk_ue_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(ticket_id)
 );
 
--- DS-2: Technician Daily Snapshots
-CREATE TABLE technician_daily_snapshot (
-    snapshot_id         NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    user_id             NUMBER NOT NULL,
-    snapshot_date       DATE NOT NULL,
-    tickets_assigned    NUMBER DEFAULT 0,
-    tickets_resolved    NUMBER DEFAULT 0,
-    avg_resolution_hrs  NUMBER(10,2),
-    csat_avg            NUMBER(4,2),
-    reopened_count      NUMBER DEFAULT 0,
-    CONSTRAINT fk_tds_user FOREIGN KEY (user_id) REFERENCES users(user_id),
-    CONSTRAINT uq_tds UNIQUE (user_id, snapshot_date)
+-- DS-2: Ticket Daily Snapshots
+CREATE TABLE ticket_daily_snapshot (
+    snapshot_date DATE NOT NULL,
+    company_id    NUMBER REFERENCES companies(company_id),
+    open_tickets  NUMBER DEFAULT 0,
+    solved_today  NUMBER DEFAULT 0,
+    avg_handle_time_hrs NUMBER,
+    PRIMARY KEY (snapshot_date, company_id)
 );
 
 -- DS-3: CSAT Scores
